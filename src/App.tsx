@@ -89,6 +89,28 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleImportAll = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const imported = JSON.parse(e.target?.result as string);
+        if (!Array.isArray(imported)) throw new Error('格式不正确');
+        const existing = loadCache();
+        // merge: imported项目优先，已有同名的跳过
+        const merged = [...imported];
+        for (const p of existing) {
+          if (!merged.find(m => m.name === p.name)) merged.push(p);
+        }
+        saveCache(merged.slice(0, 10));
+        alert(`导入成功！共 ${imported.length} 个项目已恢复。`);
+        window.location.reload();
+      } catch {
+        alert('导入失败：文件格式不正确，请选择正确的备份 JSON 文件。');
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleBackToHome = () => {
     setChapters([]);
     setProjectFiles([]);
@@ -119,6 +141,7 @@ export default function App() {
         onLoadCached={handleLoadCached}
         onDeleteCached={handleDeleteCached}
         onExportAll={handleExportAll}
+        onImportAll={handleImportAll}
       />
     );
   }

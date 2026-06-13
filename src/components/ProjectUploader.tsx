@@ -17,9 +17,10 @@ interface ProjectUploaderProps {
   onLoadCached?: (project: CachedProject) => void;
   onDeleteCached?: (name: string) => void;
   onExportAll?: () => void;
+  onImportAll?: (file: File) => void;
 }
 
-export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoadCached, onDeleteCached, onExportAll }: ProjectUploaderProps) {
+export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoadCached, onDeleteCached, onExportAll, onImportAll }: ProjectUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isReadingFiles, setIsReadingFiles] = useState(false);
@@ -30,6 +31,7 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
   const [tokenLimit, setTokenLimit] = useState(100000);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputSingleRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -282,18 +284,37 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
         </div>
 
         {/* Cached Projects */}
-        {cachedProjects.length > 0 && (
+        {cachedProjects.length > 0 ? (
           <div className="max-w-2xl mx-auto w-full">
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-sm font-semibold text-gray-500 flex items-center gap-2">
                 <Clock size={14} /> 已缓存的项目（点击继续学习）
               </h3>
-              <button
-                onClick={onExportAll}
-                className="text-xs text-indigo-500 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-3 py-1 rounded-lg transition-colors"
-              >
-                ↓ 导出备份
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => importInputRef.current?.click()}
+                  className="text-xs text-green-500 hover:text-green-700 border border-green-200 hover:border-green-400 px-3 py-1 rounded-lg transition-colors"
+                >
+                  ↑ 导入备份
+                </button>
+                <button
+                  onClick={onExportAll}
+                  className="text-xs text-indigo-500 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-3 py-1 rounded-lg transition-colors"
+                >
+                  ↓ 导出备份
+                </button>
+              </div>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onImportAll?.(file);
+                  e.target.value = '';
+                }}
+              />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {cachedProjects.map((p) => (
@@ -322,6 +343,26 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
                 </div>
               ))}
             </div>
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto w-full text-center">
+            <button
+              onClick={() => importInputRef.current?.click()}
+              className="text-sm text-green-500 hover:text-green-700 border border-green-200 hover:border-green-400 px-4 py-2 rounded-lg transition-colors"
+            >
+              ↑ 从备份文件恢复项目
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onImportAll?.(file);
+                e.target.value = '';
+              }}
+            />
           </div>
         )}
 
