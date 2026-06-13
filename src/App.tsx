@@ -78,6 +78,17 @@ export default function App() {
     saveCache(cached);
   };
 
+  const handleExportAll = () => {
+    const data = loadCache();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ai-pbl-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleBackToHome = () => {
     setChapters([]);
     setProjectFiles([]);
@@ -102,11 +113,12 @@ export default function App() {
 
   if (chapters.length === 0) {
     return (
-      <ProjectUploader 
+      <ProjectUploader
         onAnalyzeComplete={handleAnalyzeComplete}
         cachedProjects={loadCache()}
         onLoadCached={handleLoadCached}
         onDeleteCached={handleDeleteCached}
+        onExportAll={handleExportAll}
       />
     );
   }

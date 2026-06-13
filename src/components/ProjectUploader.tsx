@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FolderOpen, Loader2, BookOpen, AlertTriangle, Clock, Trash2 } from 'lucide-react';
+import { Upload, FolderOpen, FileCode, Loader2, BookOpen, AlertTriangle, Clock, Trash2 } from 'lucide-react';
 import { ProjectFile } from '../types';
 import { WORKER_URL } from '../config';
 
@@ -16,9 +16,10 @@ interface ProjectUploaderProps {
   cachedProjects?: CachedProject[];
   onLoadCached?: (project: CachedProject) => void;
   onDeleteCached?: (name: string) => void;
+  onExportAll?: () => void;
 }
 
-export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoadCached, onDeleteCached }: ProjectUploaderProps) {
+export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoadCached, onDeleteCached, onExportAll }: ProjectUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isReadingFiles, setIsReadingFiles] = useState(false);
@@ -28,6 +29,7 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
   const [isConfirmed, setIsConfirmed] = useState(false);
   const [tokenLimit, setTokenLimit] = useState(100000);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputSingleRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -195,6 +197,45 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
     processFiles(e.target.files);
   };
 
+  const handleSingleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsReadingFiles(true);
+    setError(null);
+    setStats(null);
+    setPendingFiles(null);
+    setIsConfirmed(false);
+
+    try {
+      const projectFiles: ProjectFile[] = [];
+      let totalTokens = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.size > 1024 * 500) continue;
+        const text = await file.text();
+        if (text.includes('\u0000')) continue;
+        totalTokens += estimateTokens(text);
+        projectFiles.push({ path: file.name, content: text });
+      }
+
+      if (projectFiles.length === 0) throw new Error('No valid files found.');
+
+      setStats({ files: projectFiles.length, estimatedTokens: totalTokens });
+      setPendingFiles(projectFiles);
+
+      if (totalTokens > tokenLimit) {
+        setError(`安全拦截：预估消耗约 ${totalTokens.toLocaleString()} 个 Token，超过了设定的 ${tokenLimit.toLocaleString()} Token 限制。`);
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred.');
+    } finally {
+      setIsReadingFiles(false);
+      e.target.value = '';
+    }
+  };
+
   const resetUploader = () => {
     setPendingFiles(null);
     setStats(null);
@@ -243,9 +284,17 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
         {/* Cached Projects */}
         {cachedProjects.length > 0 && (
           <div className="max-w-2xl mx-auto w-full">
-            <h3 className="text-sm font-semibold text-gray-500 mb-3 flex items-center gap-2">
-              <Clock size={14} /> 已缓存的项目（点击继续学习）
-            </h3>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-sm font-semibold text-gray-500 flex items-center gap-2">
+                <Clock size={14} /> 已缓存的项目（点击继续学习）
+              </h3>
+              <button
+                onClick={onExportAll}
+                className="text-xs text-indigo-500 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-3 py-1 rounded-lg transition-colors"
+              >
+                ↓ 导出备份
+              </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {cachedProjects.map((p) => (
                 <div
@@ -280,11 +329,10 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          onClick={() => !isAnalyzing && !isReadingFiles && !pendingFiles && fileInputRef.current?.click()}
           className={`
             relative overflow-hidden rounded-3xl border-2 transition-all duration-300
-            ${(!isAnalyzing && !isReadingFiles && !pendingFiles) ? 'cursor-pointer border-dashed' : 'border-solid'}
-            ${isDragging ? 'border-indigo-500 bg-indigo-50 scale-[1.02]' : 'border-gray-300 bg-white hover:border-indigo-400 hover:bg-gray-50'}
+            ${(!isAnalyzing && !isReadingFiles && !pendingFiles) ? 'border-dashed' : 'border-solid'}
+            ${isDragging ? 'border-indigo-500 bg-indigo-50 scale-[1.02]' : 'border-gray-300 bg-white'}
             ${(isAnalyzing || isReadingFiles) ? 'pointer-events-none opacity-80' : ''}
           `}
         >
@@ -391,22 +439,35 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
               </div>
             ) : (
               <>
-                <div className="bg-gray-100 text-gray-600 p-4 rounded-full group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
-                  <FolderOpen size={32} />
+                <div className="space-y-2 text-center">
+                  <p className="text-xl font-semibold text-gray-900">选择要学习的内容</p>
+                  <p className="text-gray-500 text-sm">或直接拖拽文件/文件夹到这里</p>
                 </div>
-                <div className="space-y-2">
-                  <h3 className="text-xl font-semibold text-gray-900">Click to Select Project Folder</h3>
-                  <p className="text-gray-500">or drag and drop your folder here</p>
+                <div className="flex gap-4 mt-2">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex flex-col items-center gap-3 px-8 py-6 bg-indigo-50 hover:bg-indigo-100 border-2 border-indigo-200 hover:border-indigo-400 rounded-2xl transition-all cursor-pointer"
+                  >
+                    <FolderOpen size={32} className="text-indigo-500" />
+                    <div className="text-center">
+                      <div className="font-semibold text-indigo-700 text-sm">上传项目文件夹</div>
+                      <div className="text-xs text-indigo-400 mt-0.5">整个代码项目</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => fileInputSingleRef.current?.click()}
+                    className="flex flex-col items-center gap-3 px-8 py-6 bg-violet-50 hover:bg-violet-100 border-2 border-violet-200 hover:border-violet-400 rounded-2xl transition-all cursor-pointer"
+                  >
+                    <FileCode size={32} className="text-violet-500" />
+                    <div className="text-center">
+                      <div className="font-semibold text-violet-700 text-sm">上传 HTML 文件</div>
+                      <div className="text-xs text-violet-400 mt-0.5">单个或多个 .html</div>
+                    </div>
+                  </button>
                 </div>
-                <div className="flex flex-col items-center gap-2 text-sm text-gray-500 mt-4">
-                  <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-full">
-                    <Upload size={16} />
-                    <span>Ignores node_modules, .git, and binaries</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-4 py-2 rounded-full">
-                    <AlertTriangle size={16} />
-                    <span>Tip: For large projects, only upload the 'src' folder to save tokens.</span>
-                  </div>
+                <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-4 py-2 rounded-full text-sm mt-2">
+                  <AlertTriangle size={16} />
+                  <span>大项目建议只上传 src 文件夹以节省 Token</span>
                 </div>
               </>
             )}
@@ -420,6 +481,14 @@ export function ProjectUploader({ onAnalyzeComplete, cachedProjects = [], onLoad
             // @ts-ignore
             webkitdirectory=""
             directory=""
+            multiple
+          />
+          <input
+            type="file"
+            ref={fileInputSingleRef}
+            onChange={handleSingleFileChange}
+            className="hidden"
+            accept=".html,.htm,.js,.ts,.tsx,.jsx,.css,.md"
             multiple
           />
         </div>
