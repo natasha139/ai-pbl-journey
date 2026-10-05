@@ -78,14 +78,14 @@ const CORS_HEADERS = {
 // Free Model Studio quotas shown in the owner's console, earliest expiry first.
 // Keep these dates explicit so an expired free quota is never used accidentally.
 const FREE_MODELS = [
-  { id: 'deepseek-v4-flash-0731', expiresAt: '2026-10-31T23:59:59+08:00', options: { reasoning_effort: 'low' } },
-  { id: 'deepseek-v4-pro-0813', expiresAt: '2026-11-13T23:59:59+08:00', options: { reasoning_effort: 'low' } },
+  { id: 'deepseek-v4-flash-0731', expiresAt: '2026-10-31T23:59:59+08:00', options: { enable_thinking: false } },
+  { id: 'deepseek-v4-pro-0813', expiresAt: '2026-11-13T23:59:59+08:00', options: { enable_thinking: false } },
   { id: 'qwen3.8-27b', expiresAt: '2026-11-18T23:59:59+08:00', options: { enable_thinking: false } },
   { id: 'kimi-k3', expiresAt: '2026-11-18T23:59:59+08:00', options: { enable_thinking: false } },
   { id: 'glm-5.3', expiresAt: '2026-11-23T23:59:59+08:00', options: { reasoning_effort: 'low' } },
   { id: 'qwen3.8-flash', expiresAt: '2026-11-25T23:59:59+08:00', options: { enable_thinking: false } },
   { id: 'qwen3.8-max-0902', expiresAt: '2026-12-01T23:59:59+08:00', options: { enable_thinking: false } },
-  { id: 'deepseek-v4.1-flash', expiresAt: '2026-12-13T23:59:59+08:00', options: { reasoning_effort: 'low' } },
+  { id: 'deepseek-v4.1-flash', expiresAt: '2026-12-13T23:59:59+08:00', options: { enable_thinking: false } },
 ];
 const CHAT_TIMEOUT_MS = 45000;
 const ANALYZE_TIMEOUT_MS = 120000;
@@ -203,7 +203,7 @@ export default {
         const fileContext = files.map(f => `--- ${f.path} ---\n${f.content}`).join('\n\n');
 
         const chapters = await callQwen(apiKey, [
-          { role: 'user', content: ANALYZE_SYSTEM_PROMPT + '\n\n以下是项目代码：\n' + fileContext },
+          { role: 'user', content: ANALYZE_SYSTEM_PROMPT + '\n\n请输出四个章节，每章 content 控制在约 200 至 350 个汉字；保留代码翻译、组件对话、术语解释和一道应用题。务必输出完整有效的 JSON 数组。\n\n以下是项目代码：\n' + fileContext },
         ], { analyze: true });
 
         return new Response(JSON.stringify({ chapters }), {
