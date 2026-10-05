@@ -75,26 +75,61 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-async function callQwen(apiKey, messages) {
-  const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'qwen-plus',
-      messages,
-    }),
-  });
+// Free Model Studio quotas shown in the owner's console, earliest expiry first.
+// Keep these dates explicit so an expired free quota is never used accidentally.
+const FREE_MODELS = [
+  { id: 'deepseek-v4-flash-0731', expiresAt: '2026-10-31T23:59:59+08:00' },
+  { id: 'deepseek-v4-pro-0813', expiresAt: '2026-11-13T23:59:59+08:00' },
+  { id: 'qwen3.8-27b', expiresAt: '2026-11-18T23:59:59+08:00' },
+  { id: 'kimi-k3', expiresAt: '2026-11-18T23:59:59+08:00' },
+  { id: 'glm-5.3', expiresAt: '2026-11-23T23:59:59+08:00' },
+  { id: 'qwen3.8-flash', expiresAt: '2026-11-25T23:59:59+08:00' },
+  { id: 'qwen3.8-max-0902', expiresAt: '2026-12-01T23:59:59+08:00' },
+  { id: 'deepseek-v4.1-flash', expiresAt: '2026-12-13T23:59:59+08:00' },
+];
+const MODEL_TIMEOUT_MS = 30000;
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Qwen API error: ${err}`);
+async function callQwen(apiKey, messages) {
+  const availableModels = FREE_MODELS.filter(model => Date.now() <= Date.parse(model.expiresAt));
+  if (availableModels.length === 0) {
+    throw new Error('免费模型额度均已过期，请更新模型列表。');
   }
 
-  const data = await response.json();
-  return data.choices[0].message.content;
+  let lastError;
+  for (const model of availableModels) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+    try {
+      const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ model: model.id, messages }),
+      });
+
+      if (!response.ok) {
+        // Never include provider error bodies in logs: they may contain request details.
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) {
+        throw new Error('模型返回了空内容');
+      }
+      return content;
+    } catch (error) {
+      lastError = error;
+      console.warn(`模型 ${model.id} 调用失败，尝试下一个:`, error?.message || error);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new Error(`所有可用免费模型均调用失败。最后错误：${lastError?.message || '未知错误'}`);
 }
 
 export default {
