@@ -78,18 +78,68 @@ const CORS_HEADERS = {
 // Free Model Studio quotas shown in the owner's console, earliest expiry first.
 // Keep these dates explicit so an expired free quota is never used accidentally.
 const FREE_MODELS = [
-  { id: 'deepseek-v4-flash-0731', expiresAt: '2026-10-31T23:59:59+08:00' },
-  { id: 'deepseek-v4-pro-0813', expiresAt: '2026-11-13T23:59:59+08:00' },
-  { id: 'qwen3.8-27b', expiresAt: '2026-11-18T23:59:59+08:00' },
-  { id: 'kimi-k3', expiresAt: '2026-11-18T23:59:59+08:00' },
-  { id: 'glm-5.3', expiresAt: '2026-11-23T23:59:59+08:00' },
-  { id: 'qwen3.8-flash', expiresAt: '2026-11-25T23:59:59+08:00' },
-  { id: 'qwen3.8-max-0902', expiresAt: '2026-12-01T23:59:59+08:00' },
-  { id: 'deepseek-v4.1-flash', expiresAt: '2026-12-13T23:59:59+08:00' },
+  { id: 'deepseek-v4-flash-0731', expiresAt: '2026-10-31T23:59:59+08:00', options: { reasoning_effort: 'low' } },
+  { id: 'deepseek-v4-pro-0813', expiresAt: '2026-11-13T23:59:59+08:00', options: { reasoning_effort: 'low' } },
+  { id: 'qwen3.8-27b', expiresAt: '2026-11-18T23:59:59+08:00', options: { enable_thinking: false } },
+  { id: 'kimi-k3', expiresAt: '2026-11-18T23:59:59+08:00', options: { enable_thinking: false } },
+  { id: 'glm-5.3', expiresAt: '2026-11-23T23:59:59+08:00', options: { reasoning_effort: 'low' } },
+  { id: 'qwen3.8-flash', expiresAt: '2026-11-25T23:59:59+08:00', options: { enable_thinking: false } },
+  { id: 'qwen3.8-max-0902', expiresAt: '2026-12-01T23:59:59+08:00', options: { enable_thinking: false } },
+  { id: 'deepseek-v4.1-flash', expiresAt: '2026-12-13T23:59:59+08:00', options: { reasoning_effort: 'low' } },
 ];
-const MODEL_TIMEOUT_MS = 30000;
+const CHAT_TIMEOUT_MS = 45000;
+const ANALYZE_TIMEOUT_MS = 120000;
 
-async function callQwen(apiKey, messages) {
+async function readStreamContent(response) {
+  if (!response.body) throw new Error('模型没有返回数据流');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let content = '';
+  let done = false;
+  try {
+    while (!done) {
+      const next = await reader.read();
+      buffer += decoder.decode(next.value || new Uint8Array(), { stream: !next.done });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') { done = true; break; }
+        if (!data) continue;
+        const part = JSON.parse(data);
+        if (part.error) throw new Error(part.error.code || '模型返回错误');
+        const delta = part.choices?.[0]?.delta?.content;
+        if (typeof delta === 'string') content += delta;
+      }
+      if (next.done) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  if (!done || !content.trim()) throw new Error('模型输出不完整');
+  return content;
+}
+
+function parseChapters(content) {
+  const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  let chapters;
+  try {
+    chapters = JSON.parse(jsonStr);
+  } catch {
+    const match = jsonStr.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('模型返回的章节格式有误');
+    chapters = JSON.parse(match[0]);
+  }
+  if (!Array.isArray(chapters) || chapters.length === 0 ||
+      !chapters.every(ch => ch && typeof ch.title === 'string' && typeof ch.content === 'string')) {
+    throw new Error('模型返回的章节内容不完整');
+  }
+  return chapters;
+}
+
+async function callQwen(apiKey, messages, { analyze = false } = {}) {
   const availableModels = FREE_MODELS.filter(model => Date.now() <= Date.parse(model.expiresAt));
   if (availableModels.length === 0) {
     throw new Error('免费模型额度均已过期，请更新模型列表。');
@@ -98,7 +148,7 @@ async function callQwen(apiKey, messages) {
   let lastError;
   for (const model of availableModels) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), analyze ? ANALYZE_TIMEOUT_MS : CHAT_TIMEOUT_MS);
     try {
       const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
         method: 'POST',
@@ -107,28 +157,23 @@ async function callQwen(apiKey, messages) {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ model: model.id, messages }),
+        body: JSON.stringify({ model: model.id, messages, ...model.options, stream: analyze }),
       });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-      if (!response.ok) {
-        // Never include provider error bodies in logs: they may contain request details.
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      const content = data?.choices?.[0]?.message?.content;
-      if (typeof content !== 'string' || !content.trim()) {
-        throw new Error('模型返回了空内容');
-      }
-      return content;
+      const content = analyze
+        ? await readStreamContent(response)
+        : (await response.json())?.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) throw new Error('模型返回了空内容');
+      return analyze ? parseChapters(content) : content;
     } catch (error) {
       lastError = error;
+      // Provider response bodies may contain user material; log only the model and failure code.
       console.warn(`模型 ${model.id} 调用失败，尝试下一个:`, error?.message || error);
     } finally {
       clearTimeout(timeout);
     }
   }
-
   throw new Error(`所有可用免费模型均调用失败。最后错误：${lastError?.message || '未知错误'}`);
 }
 
@@ -157,33 +202,9 @@ export default {
         const { files } = await request.json();
         const fileContext = files.map(f => `--- ${f.path} ---\n${f.content}`).join('\n\n');
 
-        const content = await callQwen(apiKey, [
+        const chapters = await callQwen(apiKey, [
           { role: 'user', content: ANALYZE_SYSTEM_PROMPT + '\n\n以下是项目代码：\n' + fileContext },
-        ]);
-
-        // Clean and parse JSON
-        let jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        let chapters;
-        try {
-          chapters = JSON.parse(jsonStr);
-        } catch {
-          // Attempt repair
-          let repaired = jsonStr
-            .replace(/\n/g, '\\n')
-            .replace(/\r/g, '\\r')
-            .replace(/\t/g, '\\t')
-            .replace(/,\s*([}\]])/g, '$1');
-          try {
-            chapters = JSON.parse(repaired);
-          } catch {
-            const match = jsonStr.match(/\[[\s\S]*\]/);
-            if (match) {
-              chapters = JSON.parse(match[0]);
-            } else {
-              throw new Error('AI 返回的内容格式有误，请重试。');
-            }
-          }
-        }
+        ], { analyze: true });
 
         return new Response(JSON.stringify({ chapters }), {
           headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
