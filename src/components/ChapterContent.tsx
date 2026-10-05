@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle2, Circle, ChevronRight, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Chapter } from '../types';
 
 interface ChapterContentProps {
@@ -12,8 +13,18 @@ interface ChapterContentProps {
   isLastChapter: boolean;
 }
 
-const preprocessMarkdown = (text: string) => {
-  let processed = text;
+export const preprocessMarkdown = (text: string) => {
+  // Some saved AI chapters flatten an entire GFM table into one line, using
+  // adjacent pipes where row breaks belonged. Repair only lines that contain
+  // a Markdown alignment row; leave code examples and ordinary pipes alone.
+  let processed = text.split(/(```[\s\S]*?```)/g).map((part, index) => {
+    if (index % 2 === 1) return part;
+    return part.split('\n').map(line =>
+      /\|\s*:?-{3,}:?\s*\|/.test(line) && /\|\s*\|/.test(line)
+        ? line.replace(/\|\s*\|/g, '|\n|')
+        : line
+    ).join('\n');
+  }).join('');
 
   // Glossary Tooltips: [Term]{Definition} -> [Term](tooltip:Definition)
   processed = processed.replace(/\[([^\]]+)\]\{([^}]+)\}/g, '[$1](tooltip:$2)');
@@ -85,7 +96,15 @@ export function ChapterContent({ chapter, completedTasks, onToggleTask, onNextCh
             {/* Content */}
             <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 prose prose-indigo prose-lg max-w-none">
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
+                  table: ({ children, ...props }) => (
+                    <div className="my-6 overflow-x-auto rounded-xl border border-gray-200 not-prose">
+                      <table className="w-full min-w-[32rem] border-collapse text-left text-base" {...props}>{children}</table>
+                    </div>
+                  ),
+                  th: ({ children, ...props }) => <th className="bg-indigo-50 px-4 py-3 font-semibold text-gray-900 border-b border-gray-200" {...props}>{children}</th>,
+                  td: ({ children, ...props }) => <td className="px-4 py-3 text-gray-700 border-b border-gray-100 align-top" {...props}>{children}</td>,
                   a: ({ node, href, children, ...props }) => {
                     if (href?.startsWith('tooltip:')) {
                       const definition = decodeURIComponent(href.replace('tooltip:', ''));
